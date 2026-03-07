@@ -15,7 +15,6 @@ export default {
     await handleSchedule(env);
   },
 
-  // Also allow manual trigger via HTTP for testing
   async fetch(request, env, ctx) {
     await handleSchedule(env);
     return new Response("Executed successfully", { status: 200 });
@@ -27,8 +26,7 @@ async function handleSchedule(env) {
     ACCESS_KEY_ID,
     ACCESS_KEY_SECRET,
     REGION_ID,
-    ECS_INSTANCE_ID,
-    TRAFFIC_THRESHOLD_GB
+    ECS_INSTANCE_ID
   } = env;
 
   if (!ACCESS_KEY_ID || !ACCESS_KEY_SECRET || !REGION_ID || !ECS_INSTANCE_ID) {
@@ -36,59 +34,35 @@ async function handleSchedule(env) {
     return;
   }
 
-  const threshold = parseFloat(TRAFFIC_THRESHOLD_GB || "180");
-  
   try {
-    // 1. Check Total Traffic
-    const totalTrafficGB = await getTotalTrafficGB(env);
-    console.log(`Current Total Traffic: ${totalTrafficGB.toFixed(2)} GB`);
-
-    // 2. Check ECS Status
     const instanceStatus = await getEcsStatus(env, ECS_INSTANCE_ID);
     console.log(`ECS Instance ${ECS_INSTANCE_ID} Status: ${instanceStatus}`);
 
-    // 3. Control Logic
-    if (totalTrafficGB < threshold) {
-      if (instanceStatus !== "Running" && instanceStatus !== "Starting") {
-        console.log(`Traffic (${totalTrafficGB.toFixed(2)} GB) < Threshold (${threshold} GB). Starting ECS...`);
-        await startEcsInstance(env, ECS_INSTANCE_ID);
-      } else {
-        console.log("ECS is already running or starting.");
-      }
-    } else {
-      if (instanceStatus !== "Stopped" && instanceStatus !== "Stopping") {
-        console.log(`Traffic (${totalTrafficGB.toFixed(2)} GB) >= Threshold (${threshold} GB). Stopping ECS...`);
-        await stopEcsInstance(env, ECS_INSTANCE_ID);
-      } else {
-        console.log("ECS is already stopped or stopping.");
-      }
+    if (instanceStatus === "Running" || instanceStatus === "Starting") {
+      console.log("Instance already running.");
+      return;
     }
+
+    if (instanceStatus === "Stopped") {
+      console.log("Instance stopped. Starting...");
+      await startEcsInstance(env, ECS_INSTANCE_ID);
+      return;
+    }
+
+    if (instanceStatus === "Stopping") {
+      console.log("Instance stopping. Waiting...");
+      return;
+    }
+
+    console.log(`Instance abnormal state (${instanceStatus}). Rebooting...`);
+    await rebootEcsInstance(env, ECS_INSTANCE_ID);
 
   } catch (error) {
     console.error("Error in execution:", error);
   }
 }
 
-// ================== Aliyun API Helpers ==================
-
-async function getTotalTrafficGB(env) {
-  const params = {
-    Action: 'ListCdtInternetTraffic',
-    Version: '2021-08-13',
-    // BusinessRegionId: env.REGION_ID // Optional? Code used generic endpoint
-  };
-
-  const result = await requestAliyun(env, 'cdt.aliyuncs.com', params);
-  
-  // Parse result based on Python logic: sum(d.get('Traffic', 0) for d in response_json.get('TrafficDetails', []))
-  const trafficDetails = result.TrafficDetails || [];
-  let totalBytes = 0;
-  for (const detail of trafficDetails) {
-    totalBytes += (detail.Traffic || 0);
-  }
-  
-  return totalBytes / (1024 ** 3);
-}
+// ================== ECS API ==================
 
 async function getEcsStatus(env, instanceId) {
   const params = {
@@ -100,9 +74,11 @@ async function getEcsStatus(env, instanceId) {
 
   const result = await requestAliyun(env, `ecs.${env.REGION_ID}.aliyuncs.com`, params);
   const instances = result.Instances?.Instance || [];
+
   if (instances.length === 0) {
     throw new Error("Instance not found");
   }
+
   return instances[0].Status;
 }
 
@@ -113,35 +89,27 @@ async function startEcsInstance(env, instanceId) {
     RegionId: env.REGION_ID,
     InstanceIds: JSON.stringify([instanceId])
   };
+
   return await requestAliyun(env, `ecs.${env.REGION_ID}.aliyuncs.com`, params);
 }
 
-async function stopEcsInstance(env, instanceId) {
+async function rebootEcsInstance(env, instanceId) {
   const params = {
-    Action: 'StopInstances',
+    Action: 'RebootInstance',
     Version: '2014-05-26',
     RegionId: env.REGION_ID,
-    InstanceIds: JSON.stringify([instanceId]),
+    InstanceId: instanceId,
     ForceStop: 'false'
   };
+
   return await requestAliyun(env, `ecs.${env.REGION_ID}.aliyuncs.com`, params);
 }
 
 // ================== Core Request Logic ==================
 
 async function requestAliyun(env, domain, params) {
-  const method = 'POST'; // Aliyun SDK usually uses POST/GET. The python script used POST for CDT, default for others.
-  // Actually, standard RPC can use GET or POST. POST is safer for large params.
-  // We will use POST and put params in body or query? 
-  // For signature calculation, Aliyun requires params in Query String or Body (if form-urlencoded).
-  // Let's use GET for simplicity of signature matching if possible, or POST with query params.
-  // The Python CommonRequest set method to POST.
-  // StartInstances usually works with POST.
-  
-  // Let's stick to using Query Parameters for everything including signature, and send a POST request (or GET).
-  // If we send POST, we can put parameters in the URL (Query) and empty body, or Form Body.
-  // To be consistent with signature calculation, if we put everything in Query String, it's easier.
-  
+  const method = 'POST';
+
   const finalParams = {
     ...params,
     AccessKeyId: env.ACCESS_KEY_ID,
@@ -149,14 +117,12 @@ async function requestAliyun(env, domain, params) {
     SignatureMethod: 'HMAC-SHA1',
     SignatureVersion: '1.0',
     SignatureNonce: crypto.randomUUID(),
-    Timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z') // YYYY-MM-DDThh:mm:ssZ
+    Timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
   };
 
-  // Sort and Sign
   const signature = await sign(finalParams, env.ACCESS_KEY_SECRET, method);
   finalParams.Signature = signature;
 
-  // Build Query String
   const queryString = Object.keys(finalParams)
     .sort()
     .map(key => `${percentEncode(key)}=${percentEncode(String(finalParams[key]))}`)
@@ -182,13 +148,13 @@ async function sign(params, accessKeySecret, method) {
     .map(key => `${percentEncode(key)}=${percentEncode(String(params[key]))}`)
     .join('&');
 
-  const stringToSign = 
-    method.toUpperCase() + '&' + 
-    percentEncode('/') + '&' + 
+  const stringToSign =
+    method.toUpperCase() + '&' +
+    percentEncode('/') + '&' +
     percentEncode(canonicalizedQueryString);
 
   const key = accessKeySecret + '&';
-  
+
   return await hmacSha1(key, stringToSign);
 }
 
