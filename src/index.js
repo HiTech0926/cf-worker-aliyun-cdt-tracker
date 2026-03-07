@@ -84,10 +84,10 @@ async function getEcsStatus(env, instanceId) {
 
 async function startEcsInstance(env, instanceId) {
   const params = {
-    Action: 'StartInstances',
+    Action: 'StartInstance',
     Version: '2014-05-26',
     RegionId: env.REGION_ID,
-    InstanceIds: JSON.stringify([instanceId])
+    InstanceId: instanceId
   };
 
   return await requestAliyun(env, `ecs.${env.REGION_ID}.aliyuncs.com`, params);
