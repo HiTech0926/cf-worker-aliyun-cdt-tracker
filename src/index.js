@@ -35,6 +35,13 @@ async function handleSchedule(env) {
   }
 
   try {
+    const trafficInfo = await getInstanceUsedTrafficGB(env, ECS_INSTANCE_ID);
+    if (trafficInfo.isMatched) {
+      console.log(`CDT Used Traffic for ECS ${ECS_INSTANCE_ID}: ${trafficInfo.trafficGB.toFixed(2)} GB`);
+    } else {
+      console.log(`CDT Used Traffic (fallback total) for ECS ${ECS_INSTANCE_ID}: ${trafficInfo.trafficGB.toFixed(2)} GB`);
+    }
+
     const instanceStatus = await getEcsStatus(env, ECS_INSTANCE_ID);
     console.log(`ECS Instance ${ECS_INSTANCE_ID} Status: ${instanceStatus}`);
 
@@ -63,6 +70,56 @@ async function handleSchedule(env) {
 }
 
 // ================== ECS API ==================
+
+async function getInstanceUsedTrafficGB(env, instanceId) {
+  const params = {
+    Action: 'ListCdtInternetTraffic',
+    Version: '2021-08-13'
+  };
+
+  const result = await requestAliyun(env, 'cdt.aliyuncs.com', params);
+  const trafficDetailsRaw = result?.TrafficDetails;
+  const trafficDetails = Array.isArray(trafficDetailsRaw)
+    ? trafficDetailsRaw
+    : Array.isArray(trafficDetailsRaw?.TrafficDetail)
+      ? trafficDetailsRaw.TrafficDetail
+      : [];
+
+  let totalBytes = 0;
+  let matchedBytes = 0;
+  let matchedCount = 0;
+
+  for (const detail of trafficDetails) {
+    const trafficValue = Number(detail?.Traffic ?? detail?.TrafficBytes ?? 0);
+    const trafficBytes = Number.isFinite(trafficValue) ? trafficValue : 0;
+    totalBytes += trafficBytes;
+
+    const resourceId = String(
+      detail?.ResourceId ??
+      detail?.InstanceId ??
+      detail?.ProductInstanceId ??
+      detail?.Id ??
+      ''
+    );
+
+    if (resourceId === instanceId) {
+      matchedBytes += trafficBytes;
+      matchedCount += 1;
+    }
+  }
+
+  if (matchedCount > 0) {
+    return {
+      trafficGB: matchedBytes / (1024 ** 3),
+      isMatched: true
+    };
+  }
+
+  return {
+    trafficGB: totalBytes / (1024 ** 3),
+    isMatched: false
+  };
+}
 
 async function getEcsStatus(env, instanceId) {
   const params = {

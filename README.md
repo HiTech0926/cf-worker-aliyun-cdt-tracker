@@ -1,12 +1,16 @@
+---
+ai_level: low
+---
+
 # Aliyun CDT Tracker & ECS Control (Cloudflare Worker)
 
-Running Aliyun CDT Traffic Monitor and ECS Control on Cloudflare Workers using Cron Triggers.
+This project runs Aliyun ECS control logic on Cloudflare Workers through Cron Triggers.
 
-This project replaces the original `aly_ecs.py` script with a serverless solution.
+It is a serverless replacement for the original `aly_ecs.py` script.
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) installed.
+- [Node.js](https://nodejs.org/) installed
 - Cloudflare Account.
 
 ## Setup
@@ -19,7 +23,7 @@ This project replaces the original `aly_ecs.py` script with a serverless solutio
 
 2. **Configure Secrets**
 
-   You must set the following secrets in Cloudflare for security. Do NOT commit them to code.
+   For security, set the following secrets in Cloudflare. Do not commit them to the repository.
 
    ```bash
    npx wrangler secret put ACCESS_KEY_ID
@@ -29,13 +33,13 @@ This project replaces the original `aly_ecs.py` script with a serverless solutio
    # Enter your Aliyun Access Key Secret
 
    npx wrangler secret put REGION_ID
-   # Enter your Region ID (e.g., cn-hongkong)
+   # Enter your region ID (for example: cn-hongkong)
 
    npx wrangler secret put ECS_INSTANCE_ID
    # Enter your ECS Instance ID
 
    npx wrangler secret put TRAFFIC_THRESHOLD_GB
-   # Enter the threshold (e.g., 180). Default is 180 if not set.
+   # Enter the threshold (for example: 180). The default is 180 if not set.
    ```
 
 3. **Deploy**
@@ -46,7 +50,7 @@ This project replaces the original `aly_ecs.py` script with a serverless solutio
 
 ## Configuration
 
-- **Schedule**: The worker runs every 30 minutes by default. You can change this in `wrangler.toml` under `[triggers]`.
+- **Schedule**: By default, the worker runs every 30 minutes. You can change this in `wrangler.toml` under `[triggers]`.
   ```toml
   [triggers]
   crons = ["*/30 * * * *"]
@@ -55,8 +59,8 @@ This project replaces the original `aly_ecs.py` script with a serverless solutio
 ## Development
 
 - **Local Test (Trigger via HTTP)**
-  
-  You can trigger the logic manually by visiting the worker URL (e.g., during development or `wrangler dev`).
+
+   During development, you can trigger the logic manually by visiting the worker URL, for example while using `wrangler dev`.
 
   ```bash
   npx wrangler dev
